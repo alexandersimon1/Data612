@@ -1,0 +1,237 @@
+---
+title: "DATA612 Project 1"
+author: "Alexander Simon"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+set.seed(123)
+
+library(tidyverse)
+```
+
+## Introduction
+
+This project uses global baseline prediction and RMSE to predict and evaluate movie ratings. These predictions could be used to recommend movies to viewers.
+
+## Data
+
+### Source and input
+
+I used movie ratings data from [MovieLens](https://grouplens.org/datasets/movielens/), specifically the 2018 dataset for education and development (small version).
+
+```{r}
+# The links point to Data607 because I used this dataset in a previous course
+movie_ratings <- read_csv('https://media.githubusercontent.com/media/alexandersimon1/Data607/main/Project_Final/ratings.csv', show_col_types = FALSE)
+```
+
+### Structure
+
+The `movie_ratings` dataframe has 100,836 rows (users) and 4 columns.
+
+```{r}
+glimpse(movie_ratings)
+```
+
+### Training and test datasets
+
+I divided the ratings data into training and test sets using an 80/20 split.
+
+```{r}
+ratings_train <- movie_ratings |>
+  group_by(userId) |>
+  slice_sample(prop = 0.8) |>
+  mutate(
+    dataset = 'train'
+  )
+
+# Since the timestamps are unique (not shown), I used it as the rating identifier 
+ratings_test <- anti_join(movie_ratings, ratings_train, by = 'timestamp') |>
+  mutate(
+    dataset = 'test'
+  )
+
+# Combine dataframes to create long data format for EDA
+movie_ratings <- bind_rows(ratings_train, ratings_test)
+
+# Select relevant columns for training and test datasets
+ratings_train <- select(ratings_train, -c(timestamp, dataset))
+ratings_test <- select(ratings_test, -c(timestamp, dataset))
+```
+
+## Exploratory data analyses
+
+### Distribution of ratings
+
+The ratings range from 0.5 to 5.0. Most (\~80%) ratings are $\ge3$ and the most common rating is 4.0.
+
+```{r}
+n_ratings <- nrow(movie_ratings)
+
+# Create contingency table of rating counts and calculate cumulative proportions
+ratings_count <- as.data.frame(table(movie_ratings$rating))
+colnames(ratings_count) <- c('rating', 'count')
+ratings_count |>
+  arrange(desc(rating)) |>
+  mutate(
+    cumulative_prop = round(cumsum(count) / n_ratings, 3)
+  )
+```
+
+```{r}
+most_common_rating <- ratings_count$rating[ratings_count$count == max(ratings_count$count)]
+most_common_rating <- as.numeric(as.character(most_common_rating))
+sprintf('The most common rating is %.1f', most_common_rating)
+```
+
+The distribution of ratings in the training and test sets is similar.
+
+```{r}
+ggplot(movie_ratings, aes(x = rating, fill = dataset)) + 
+  geom_bar(aes(y = after_stat(prop)), position = 'dodge') +
+  ylim(0, 0.3) +
+  labs(x = 'Rating',
+       y = 'Proportion') +
+  guides(x = guide_axis(minor.ticks = TRUE),
+         y = guide_axis(minor.ticks = TRUE, cap = 'upper')) +
+  scale_fill_manual(values = c('#E1BE6A', '#40B0A6')) +
+  theme_classic() +
+  theme(axis.title = element_text(face = "bold")) + 
+  ggtitle('Comparison of ratings in test vs train datasets')
+```
+
+## Global mean rating and RMSE
+
+The global mean rating is approximately 3.5.
+
+```{r}
+(global_mean_rating <- mean(movie_ratings$rating))
+```
+
+In the training dataset, the RMSE is approximately 1.04.
+
+```{r}
+rmse <- function(observations, mean) {
+  rms_error <- sqrt(mean((observations - mean)^2))
+  return(rms_error)
+}
+
+(rmse_train1 <- rmse(ratings_train$rating, global_mean_rating))
+```
+
+In the test dataset, the RMSE is approximately 1.03.
+
+```{r}
+(rmse_test1 <- rmse(ratings_test$rating, global_mean_rating))
+```
+
+## Biases in training dataset
+
+### User biases
+
+Each user's bias is their average rating minus the global mean rating.
+
+```{r}
+user_biases <- ratings_train |>
+  group_by(userId) |>
+  summarise(
+    mean_rating = round(mean(rating), 3),
+    n_ratings = n(),
+    .groups = 'drop'
+  ) |>
+  mutate(
+    bias = round(mean_rating - global_mean_rating, 3)
+  )
+
+user_biases
+```
+
+### Item biases
+
+Each item's bias is its average rating minus the global mean rating.
+
+```{r}
+item_biases <- ratings_train |>
+  group_by(movieId) |>
+  summarise(
+    mean_rating = round(mean(rating), 3),
+    n_ratings = n(),
+    .groups = 'drop'
+  ) |>
+  mutate(
+    bias = round(mean_rating - global_mean_rating, 3)
+  )
+
+item_biases
+```
+
+## Baseline prediction and RMSE
+
+The predicted movie rating $r$ is the sum of the global mean rating ($\mu$), user bias ($b_u$), and item bias ($b_i$), ie $$\hat{r}_{ui} = \mu + b_u + b_i$$
+
+### Training dataset
+
+```{r}
+# This block may take a few seconds to run
+ratings_train <- ratings_train |>
+  rowwise() |>
+  mutate(
+    predicted_rating = global_mean_rating +
+                       # Check whether user/item has corresponding bias; if so, add its value, otherwise add 0
+                       ifelse(userId %in% user_biases$userId, user_biases$bias[user_biases$userId == userId], 0) +
+                       ifelse(movieId %in% item_biases$movieId, item_biases$bias[item_biases$movieId == movieId], 0),
+    # Constrain ratings to range in original dataset
+    predicted_rating = case_when(
+      (predicted_rating < 0.5) ~ 0.5,
+      (predicted_rating > 5) ~ 5,
+      TRUE ~ predicted_rating  # no change if not out of range
+    )
+  )
+```
+
+The RMSE of the predicted ratings is approximately 0.81.
+
+```{r}
+(rmse_train2 <- rmse(ratings_train$predicted_rating, global_mean_rating))
+```
+
+### Test dataset
+
+```{r}
+ratings_test <- ratings_test |>
+  rowwise() |>
+  mutate(
+    predicted_rating = global_mean_rating +
+                       # Check whether user/item has corresponding bias; if so, add its value, otherwise add 0
+                       ifelse(userId %in% user_biases$userId, user_biases$bias[user_biases$userId == userId], 0) +
+                       ifelse(movieId %in% item_biases$movieId, item_biases$bias[item_biases$movieId == movieId], 0),
+    # constrain ratings to range in original dataset
+    predicted_rating = case_when(
+      (predicted_rating < 0.5) ~ 0.5,
+      (predicted_rating > 5) ~ 5,
+      TRUE ~ predicted_rating  # otherwise no change
+    )
+  )
+```
+
+The RMSE of the predicted ratings is approximately 0.77.
+
+```{r}
+(rmse_test2 <- rmse(ratings_test$predicted_rating, global_mean_rating))
+```
+
+## Summary and conclusions
+
+The performance of the global baseline predictor was similar in both datasets. Specifically, the predictor improved the RMSE by \~22% and \~26% in the training and test datasets, respectively.
+
+```{r}
+(rmse_train1 - rmse_train2) / rmse_train1
+```
+
+```{r}
+(rmse_test1 - rmse_test2) / rmse_test1
+```
+
+However, relative to the range of the movie ratings (0 to 5), $RMSE \approx 0.8$ may not be sufficiently accurate for a movie recommender system, particularly for movies with average ratings (ie, in the middle of the rating scale). Other types of predictors may perform better.
