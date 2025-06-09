@@ -23,7 +23,7 @@ This project uses global baseline prediction and RMSE to predict and evaluate mo
 I used movie ratings data from [MovieLens](https://grouplens.org/datasets/movielens/), specifically the 2018 dataset for education and development (small version).
 
 ```{r}
-# The links point to Data607 because I used this dataset in a previous course
+# The link points to Data607 because I used this dataset in a previous course
 movie_ratings <- read_csv('https://media.githubusercontent.com/media/alexandersimon1/Data607/main/Project_Final/ratings.csv', show_col_types = FALSE)
 ```
 
@@ -110,7 +110,7 @@ The global mean rating is approximately 3.5.
 (global_mean_rating <- mean(movie_ratings$rating))
 ```
 
-In the training dataset, the RMSE is approximately 1.04.
+In the training dataset, the root mean square error (RMSE) is approximately 1.04.
 
 ```{r}
 rmse <- function(observations, mean) {
@@ -179,9 +179,12 @@ ratings_train <- ratings_train |>
   rowwise() |>
   mutate(
     predicted_rating = global_mean_rating +
-                       # Check whether user/item has corresponding bias; if so, add its value, otherwise add 0
-                       ifelse(userId %in% user_biases$userId, user_biases$bias[user_biases$userId == userId], 0) +
-                       ifelse(movieId %in% item_biases$movieId, item_biases$bias[item_biases$movieId == movieId], 0),
+                       # Check whether user/item has corresponding bias; 
+                       # if so, add its value, otherwise add 0
+                       ifelse(userId %in% user_biases$userId, 
+                              user_biases$bias[user_biases$userId == userId], 0) +
+                       ifelse(movieId %in% item_biases$movieId,
+                              item_biases$bias[item_biases$movieId == movieId], 0),
     # Constrain ratings to range in original dataset
     predicted_rating = case_when(
       (predicted_rating < 0.5) ~ 0.5,
@@ -204,14 +207,17 @@ ratings_test <- ratings_test |>
   rowwise() |>
   mutate(
     predicted_rating = global_mean_rating +
-                       # Check whether user/item has corresponding bias; if so, add its value, otherwise add 0
-                       ifelse(userId %in% user_biases$userId, user_biases$bias[user_biases$userId == userId], 0) +
-                       ifelse(movieId %in% item_biases$movieId, item_biases$bias[item_biases$movieId == movieId], 0),
+                       # Check whether user/item has corresponding bias; 
+                       # if so, add its value, otherwise add 0
+                       ifelse(userId %in% user_biases$userId,
+                              user_biases$bias[user_biases$userId == userId], 0) +
+                       ifelse(movieId %in% item_biases$movieId,
+                              item_biases$bias[item_biases$movieId == movieId], 0),
     # constrain ratings to range in original dataset
     predicted_rating = case_when(
       (predicted_rating < 0.5) ~ 0.5,
       (predicted_rating > 5) ~ 5,
-      TRUE ~ predicted_rating  # otherwise no change
+      TRUE ~ predicted_rating
     )
   )
 ```
